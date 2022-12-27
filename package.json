@@ -1,0 +1,17 @@
+{
+  "name": "signalling",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "serve": "./node_modules/.bin/serve .",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "serve": "^12.0.0",
+    "ws": "^8.0.0"
+  }
+}

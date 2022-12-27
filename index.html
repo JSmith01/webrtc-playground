@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WS client</title>
+    <style>
+        video {
+            border: 1px solid darkgreen;
+        }
+    </style>
+</head>
+<body>
+    <div style="display: flex;">
+        <div style="flex: 0 0 auto;margin-right:50px;">
+            <button onclick="doConnect()">Connect</button>
+            <button onclick="runVideo()">Run video</button>
+        </div>
+        <div style="flex: 1">
+            <input type="text" id="msg" placeholder="message">
+            <button onclick="sendMessage()">Send</button>
+        </div>
+    </div>
+    
+    <div id="messages"></div>
+    
+    <video id="self" autoplay muted></video>
+    <h3>Remote videos</h3>
+    <div id="remotes"></div>
+    <script>
+        document.title = 'test ' + Math.floor(Math.random() * 3);
+
+        const ws = new WebSocket('ws://localhost:8080');
+        let onmessageCb = null;
+
+        const wsReady = new Promise(resolve => {
+            ws.onopen = resolve;
+        });
+
+        ws.onmessage = e => {
+            let isData = false;
+            try {
+                const parsed = JSON.parse(e.data);
+                isData = typeof parsed === 'object';
+                if (onmessageCb && isData) onmessageCb(parsed);
+            } catch (e) {}
+            if (isData) return;
+            const msg = document.createElement('div');
+            msg.innerText = e.data;
+            document.getElementById('messages').appendChild(msg);
+        }
+        function sendMessage() {
+            ws.send(document.getElementById('msg').value);
+        }
+
+        const pc = new RTCPeerConnection();
+        pc.onicecandidate = async e => {
+            console.log('ice candidate fired', e);
+            if (!e.candidate) return;
+            await wsReady;
+            ws.send(JSON.stringify(e.candidate.toJSON()));
+        }
+
+        onmessageCb = async function(data) {
+            console.log('signaling: ', data);
+            if (data.desc) {
+                await pc.setRemoteDescription(new RTCSessionDescription(data.desc));
+                console.log('set remote SDP', data);
+                if (pc.signalingState === 'have-remote-offer') {
+                    await pc.setLocalDescription();
+                    ws.send(JSON.stringify({ desc: pc.localDescription }));
+                    console.log('answered with ', pc.localDescription);
+                }
+            }
+            if (data.candidate) {
+                pc.addIceCandidate(new RTCIceCandidate(data));
+                console.log('added remote ICE', data);
+            }
+        }
+
+        const knownTracks = [];
+
+        function onTrack(track) {
+            if (knownTracks.includes(track)) return;
+            knownTracks.push(track);
+            const remoteVideo = new MediaStream();
+            remoteVideo.addTrack(track);
+            const video = document.createElement('video');
+            video.autoplay = true;
+            video.muted = true;
+            video.srcObject = remoteVideo;
+            document.getElementById('remotes').appendChild(video);
+        }
+
+        pc.ontrack = e => {
+            console.log('ontrack fired', e);
+            onTrack(e.track);
+        }
+
+        async function doConnect() {
+            let negotiating = false;
+            async function negotiate() {
+                if (negotiating) return;
+                negotiating = true;
+                await pc.setLocalDescription();
+                ws.send(JSON.stringify({ desc: pc.localDescription }));
+                negotiating = false;
+            }
+            pc.onnegotiationneeded = negotiate;
+            const tr = pc.addTransceiver('video', { direction: 'sendrecv', sendEncodings: [
+                { rid:1, maxBitrate: 1300000, scaleResolutionDownBy: 1, active: true },
+                { rid:2, maxBitrate: 500000, scaleResolutionDownBy: 2, active: true },
+                { rid:3, maxBitrate: 150000, scaleResolutionDownBy: 4, active: true },
+            ]});
+            onTrack(tr.receiver.track);
+            negotiate();
+        }
+
+        let hasvideo = false;
+        async function runVideo() {
+            if (hasvideo) return;
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            document.getElementById('self').srcObject = stream;
+            hasvideo = true;
+            const tr = pc.getTransceivers()[0];
+            tr.sender.replaceTrack(stream.getVideoTracks()[0]);
+        }
+    </script>
+</body>
+</html>
